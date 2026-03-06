@@ -12,73 +12,70 @@ chrome_options.add_argument('--disable-dev-shm-usage')
 chrome_options.add_argument('--ignore-certificate-errors')
 chrome_options.add_argument('--ignore-ssl-errors')
 chrome_options.accept_insecure_certs = True
-user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-chrome_options.add_argument(f'user-agent={user_agent}')
 
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
-    print("Εκκίνηση Extractor...")
+    print("Εκκίνηση... Ανίχνευση χάρτη Leaflet (Zero-Menu Method)")
     driver.get("https://www.emy.gr/hnms-stations")
-    # Αυξάνουμε την αναμονή στα 20 δευτερόλεπτα για σιγουριά
-    time.sleep(20) 
+    time.sleep(25) # Δίνουμε χρόνο στον χάρτη να "γεννήσει" τις πινέζες
 
-    js_get_leaflet_data = """
+    # ΤΟ ΑΠΟΛΥΤΟ SCRIPT: Ψάχνει όλα τα Layers του χάρτη και τραβάει τα IDs
+    js_sniffer = """
+    var stations = [];
     try {
-        var container = document.querySelector('.leaflet-container');
-        if(!container) return null;
-        var map = null;
-        for (var key in container) {
+        var mapContainer = document.querySelector('.leaflet-container');
+        var mapObj = null;
+        
+        // Ψάχνουμε το εσωτερικό αντικείμενο του χάρτη
+        for (let key in mapContainer) {
             if (key.startsWith('__leaflet_')) {
-                map = container[key];
-                if (map._map) map = map._map;
+                mapObj = mapContainer[key];
+                if (mapObj._map) mapObj = mapObj._map;
                 break;
             }
         }
-        if(!map) return null;
-        
-        var stations = [];
-        map.eachLayer(function(layer) {
-            if(layer._popup && typeof layer._popup._content === 'string') {
-                var content = layer._popup._content;
-                var matchId = content.match(/selectStation\\s*\\((\\d+)\\)/);
-                var tempDiv = document.createElement('div');
-                tempDiv.innerHTML = content;
-                var text = tempDiv.textContent || tempDiv.innerText;
-                var name = text.split('\\n')[0].trim();
-                
-                if (matchId && name) {
-                    stations.push({
-                        id: matchId[1],
-                        name: name.replace(/[^a-zA-Z0-9α-ωΑ-Ω]/g, '_')
-                    });
+
+        if(mapObj) {
+            mapObj.eachLayer(function(layer) {
+                if(layer._popup && layer._popup._content) {
+                    var content = layer._popup._content;
+                    // Ψάχνουμε τη συνάρτηση selectStation(ID) μέσα στο popup
+                    var idMatch = content.match(/selectStation\\((\\d+)\\)/);
+                    var nameMatch = content.match(/<b>(.*?)<\\/b>/) || content.match(/<h[1-6]>(.*?)<\\/h[1-6]>/);
+                    
+                    if(idMatch) {
+                        stations.append({
+                            id: idMatch[1],
+                            name: (nameMatch ? nameMatch[1] : "Station_" + idMatch[1]).trim().replace(/ /g, "_")
+                        });
+                    }
                 }
-            }
-        });
-        return stations;
-    } catch(e) { return null; }
+            });
+        }
+    } catch(e) { return "ERROR: " + e.message; }
+    return stations;
     """
     
-    stations_data = driver.execute_script(js_get_leaflet_data)
+    stations_data = driver.execute_script(js_sniffer)
     
-    if not stations_data or len(stations_data) == 0:
-        print("ΣΦΑΛΜΑ: Δεν βρέθηκαν σταθμοί στον χάρτη!")
-        sys.exit(1) # Αναγκάζουμε το Workflow να σταματήσει εδώ
+    # Αν το sniffer αποτύχει, δοκιμάζουμε το plan B: "Regex στο Page Source"
+    if not stations_data or isinstance(stations_data, str):
+        print("Το sniffer απέτυχε, πάμε σε Hard-Coding Regex...")
+        page_source = driver.page_source
+        import re
+        # Ψάχνουμε μοτίβα του στυλ selectStation(123) και το όνομα δίπλα
+        found = re.findall(r'selectStation\((\d+)\)', page_source)
+        stations_data = [{"id": s_id, "name": f"Station_{s_id}"} for s_id in set(found)]
 
-    # Προσθήκη Ελληνικού
-    stations_data.append({"id": "68", "name": "ELLINIKO"})
-    
-    seen = set()
-    unique_stations = []
-    for s in stations_data:
-        if s['id'] not in seen:
-            seen.add(s['id'])
-            unique_stations.append(s)
+    if not stations_data:
+        print("ΣΦΑΛΜΑ: Ούτε ο χάρτης ούτε ο κώδικας έδωσαν σταθμούς.")
+        sys.exit(1)
 
     with open('stations.json', 'w', encoding='utf-8') as f:
-        json.dump(unique_stations, f, ensure_ascii=False)
+        json.dump(stations_data, f, ensure_ascii=False)
     
-    print(f"ΕΠΙΤΥΧΙΑ: {len(unique_stations)} σταθμοί έτοιμοι.")
+    print(f"ΕΠΙΤΥΧΙΑ: Βρέθηκαν {len(stations_data)} σταθμοί!")
 
 except Exception as e:
     print(f"Crash: {e}")
