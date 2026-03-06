@@ -1,13 +1,14 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
 import time
 import os
 import sys
 from datetime import datetime
 
-# Λαμβάνουμε το ID και το Όνομα του σταθμού ως ορίσματα από το GitHub
+# Λήψη ορισμάτων από το Matrix
 if len(sys.argv) < 3:
-    print("Σφάλμα: Απαιτούνται ID και Όνομα σταθμού.")
     sys.exit(1)
 
 station_id = sys.argv[1]
@@ -17,7 +18,9 @@ chrome_options = Options()
 chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
-chrome_options.add_argument('--window-size=1920,1080') # Δεν χρειάζεται γίγαντας
+chrome_options.add_argument('--window-size=1920,2000') 
+
+# SSL Bypass (Η ασπίδα μας)
 chrome_options.add_argument('--ignore-certificate-errors')
 chrome_options.add_argument('--ignore-ssl-errors')
 chrome_options.accept_insecure_certs = True
@@ -27,91 +30,60 @@ chrome_options.add_argument(f'user-agent={user_agent}')
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
-    print(f"[{station_name}] Επεξεργασία (ID: {station_id})...")
+    print(f"[{station_name}] Εκκίνηση...")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(12) 
+    time.sleep(15) # Χρόνος για να φορτώσει η JS του χάρτη
 
     today = datetime.now().strftime("%Y-%m-%d")
     save_path = f"screenshots/{today}"
     os.makedirs(save_path, exist_ok=True)
 
-    # 1. Σκοτώνουμε τα cookies
-    driver.execute_script("""
-        document.querySelectorAll('*').forEach(el => {
-            var s = window.getComputedStyle(el);
-            if(s.position === 'fixed' || s.position === 'sticky' || el.id.includes('cookie')) el.remove();
-        });
-    """)
-    time.sleep(1)
+    # 1. ΤΟ «ΑΝΘΡΩΠΙΝΟ ΧΕΡΙ» ΜΕΣΩ ΚΩΔΙΚΑ
+    # Καλούμε απευθείας τη συνάρτηση που ανοίγει τον σταθμό, χωρίς να ψάχνουμε μενού
+    select_script = f"if(typeof selectStation === 'function') {{ selectStation({station_id}); }} else {{ throw new Error('JS Not Ready'); }}"
+    driver.execute_script(select_script)
+    print(f"[{station_name}] Ο σταθμός επιλέχθηκε.")
+    time.sleep(10) # Περιμένουμε να φορτώσουν τα δεδομένα του σταθμού και το διάγραμμα
 
-    # 2. ΤΟ ΜΑΓΙΚΟ ID: Επιλογή σταθμού απευθείας από το dropdown
-    js_select_station = f"""
-    try {{
-        var select = document.querySelector('select.form-control');
-        if (select) {{
-            select.value = '{station_id}';
-            select.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            return true;
-        }}
-        return false;
-    }} catch(e) {{ return false; }}
+    # 2. ΦΥΣΙΚΟ HOVER ΜΕ ActionChains
+    # Υπολογίζουμε τα pixels της καμπύλης
+    js_get_coords = """
+    var chart = Highcharts.charts.find(c => c && c.series && c.series[0].points);
+    if (!chart) return null;
+    var points = chart.series[0].points.filter(p => p.y !== null);
+    if (points.length === 0) return null;
+    
+    var maxP = points.reduce((a, b) => (a.y > b.y ? a : b));
+    var minP = points.reduce((a, b) => (a.y < b.y ? a : b));
+    
+    return {
+        maxX: maxP.plotX + chart.plotLeft,
+        maxY: maxP.plotY + chart.plotTop,
+        minX: minP.plotX + chart.plotLeft,
+        minY: minP.plotY + chart.plotTop
+    };
     """
-    
-    success_selection = driver.execute_script(js_select_station)
-    
-    if not success_selection:
-        print(f"[{station_name}] Σφάλμα: Δεν μπόρεσα να επιλέξω τον σταθμό με ID {station_id}.")
-        driver.save_screenshot(f"{save_path}/ERROR_{station_name}_SELECTION.png")
-        sys.exit(1)
+    coords = driver.execute_script(js_get_coords)
 
-    # 3. Περιμένουμε το διάγραμμα Highcharts (δεν χρειάζεται σκρολ πια, είναι ορατό)
-    time.sleep(8) 
-    
-    # 4. ΤΟ ΑΠΟΛΥΤΟ NATIVE JS HOVER
-    js_native_hover = """
-    try {
-        var isMax = arguments[0];
-        var chart = Highcharts.charts.find(c => c && c.series && c.series[0].points);
-        if (!chart) return false;
-        var points = chart.series[0].points;
-        var target = null;
-        for(var j=0; j<points.length; j++) {
-            if(points[j].y !== null) {
-                if(target === null) target = points[j];
-                else if(isMax && points[j].y > target.y) target = points[j];
-                else if(!isMax && points[j].y < target.y) target = points[j];
-            }
-        }
-        if(!target) return false;
-        var rect = chart.container.getBoundingClientRect();
-        var clientX = rect.left + chart.plotLeft + target.plotX;
-        var clientY = rect.top + chart.plotTop + target.plotY;
-        var evt = new MouseEvent('mousemove', {
-            clientX: clientX, clientY: clientY, bubbles: true, cancelable: true, view: window
-        });
-        chart.container.dispatchEvent(evt);
-        return true;
-    } catch(e) { return false; }
-    """
+    if coords:
+        chart_container = driver.find_element(By.CSS_SELECTOR, ".highcharts-container")
+        actions = ActionChains(driver)
 
-    # Φωτογραφία MAX
-    if driver.execute_script(js_native_hover, True):
+        # MAX
+        actions.move_to_element_with_offset(chart_container, coords['maxX'], coords['maxY']).perform()
         time.sleep(1.5)
         driver.save_screenshot(f"{save_path}/{station_name}_MAX.png")
-    else:
-        driver.save_screenshot(f"{save_path}/ERROR_{station_name}_MAX.png")
 
-    # Φωτογραφία MIN
-    if driver.execute_script(js_native_hover, False):
+        # MIN
+        actions.move_to_element_with_offset(chart_container, coords['minX'], coords['minY']).perform()
         time.sleep(1.5)
         driver.save_screenshot(f"{save_path}/{station_name}_MIN.png")
+        print(f"[{station_name}] Screenshots αποθηκεύτηκαν.")
     else:
-        driver.save_screenshot(f"{save_path}/ERROR_{station_name}_MIN.png")
-
-    print(f"[{station_name}] Ολοκληρώθηκε ΕΠΙΤΥΧΩΣ.")
+        print(f"[{station_name}] Δεν βρέθηκαν δεδομένα στο διάγραμμα.")
+        driver.save_screenshot(f"{save_path}/NO_DATA_{station_name}.png")
 
 except Exception as e:
-    print(f"[{station_name}] Κράσαρε: {e}")
-    # Δεν βγάζουμε screenshot κράσαρματος εδώ για να μην γεμίζει ο φάκελος
+    print(f"[{station_name}] Σφάλμα: {e}")
 finally:
     driver.quit()
