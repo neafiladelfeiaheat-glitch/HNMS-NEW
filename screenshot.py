@@ -1,10 +1,13 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 import time
 import os
 from datetime import datetime
 
-# --- Ρυθμίσεις Browser ---
 chrome_options = Options()
 chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
@@ -14,80 +17,53 @@ user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 chrome_options.add_argument(f'user-agent={user_agent}')
 
 driver = webdriver.Chrome(options=chrome_options)
+wait = WebDriverWait(driver, 10)
 
-# Η λίστα των σταθμών με τα ΕΣΩΤΕΡΙΚΑ IDs της ΕΜΥ (για να μην ψάχνουμε πινέζες)
-target_stations = {
-    "Ελληνικό": "72",
-    "Ελευσίνα": "81",
-    "Ελ. Βενιζέλος 03L": "28",
-    "Μαλακάσα": "49",
-    "Μαρκόπουλο": "48",
-    "Μέγαρα": "51",
-    "Oaka": "73",
-    "Πάρνηθα": "63",
-    "Τατόι": "55",
-    "Βούλα": "303",
-    "Κάσος": "41",
-    "Κάρπαθος": "8",
-    "Ρόδος": "59",
-    "Σπάρτη": "53"
-}
+# Ξεκινάμε με 4 σταθμούς για την απόλυτη δοκιμή (Κάσος, Σπάρτη, Ρόδος, Μαρκόπουλο)
+target_stations = ["ΚΑΣΟΣ", "ΣΠΑΡΤΗ", "ΡΟΔΟΣ", "ΜΑΡΚΟΠΟΥΛΟ"] 
 
 try:
-    print("--- ΕΚΚΙΝΗΣΗ DIRECT ACCESS ---")
+    print("Εκκίνηση...")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(10) # Περιμένουμε την αρχική φόρτωση
+    time.sleep(8)
 
-    # Βίαιο κλείσιμο των Cookies (που είδαμε στη φωτογραφία ότι εμποδίζουν)
-    try:
-        driver.execute_script("document.querySelectorAll('button').forEach(b => { if(b.textContent.includes('Αποδοχή')) b.click(); })")
-        time.sleep(2)
-    except:
-        pass
+    # 1. Η ΕΞΑΫΛΩΣΗ ΤΗΣ ΑΣΠΙΔΑΣ (Cookies)
+    # Βρίσκει οτιδήποτε εμποδίζει στην οθόνη (fixed elements) και το διαγράφει εντελώς
+    driver.execute_script("""
+        document.querySelectorAll('button').forEach(b => { if(b.textContent.includes('Αποδοχή')) b.click(); });
+        document.querySelectorAll('*').forEach(el => {
+            var style = window.getComputedStyle(el);
+            if(style.position === 'fixed' || style.position === 'sticky') {
+                el.remove();
+            }
+        });
+    """)
+    print("Τα εμπόδια διαγράφηκαν.")
+    time.sleep(2)
 
-    # Δημιουργία φακέλου
     today = datetime.now().strftime("%Y-%m-%d")
-    save_path = f"screenshots/{today}"
-    os.makedirs(save_path, exist_ok=True)
+    os.makedirs(f"screenshots/{today}", exist_ok=True)
 
-    # Πάμε σε κάθε σταθμό μέσω του ID του!
-    for name, station_id in target_stations.items():
-        print(f"Ανάλυση σταθμού: {name} (ID: {station_id})")
+    for station in target_stations:
+        print(f"Αναζήτηση για: {station}")
         try:
-            # Το μαγικό JavaScript: Λέμε στο site "Επέλεξε αυτόν τον σταθμό"
-            # Αυτό παρακάμπτει εντελώς τον χάρτη!
-            js_select = f"""
-            // Βρίσκουμε την κεντρική λειτουργία επιλογής σταθμού (αν υπάρχει στο scope)
-            // Εναλλακτικά, προσομοιώνουμε το API call.
-            var selectElement = document.querySelector('select.form-control'); // Αν υπάρχει κρυφό select
-            if (selectElement) {{
-                selectElement.value = '{station_id}';
-                selectElement.dispatchEvent(new Event('change'));
-                return true;
-            }}
-            
-            // Αν όχι, ψάχνουμε τη λίστα που τροφοδοτεί το Search
-            var items = document.querySelectorAll('li, div.item'); // Προσαρμογή
-            for(var i=0; i<items.length; i++) {{
-                 // Αν το στοιχείο έχει ένα attribute με το ID ή το όνομα
-                 if (items[i].getAttribute('data-value') === '{station_id}' || items[i].textContent.includes('{name}')) {{
-                     items[i].click();
-                     return true;
-                 }}
-            }}
-            return false;
-            """
-            
-            success = driver.execute_script(js_select)
-            
-            if not success:
-                print(f"Αποτυχία: Δεν μπόρεσα να φορτώσω τον σταθμό {name} με ID {station_id}.")
-                continue
+            # 2. Προσομοίωση ανθρώπου: Κλικ στην αναζήτηση
+            try:
+                search_icon = driver.find_element(By.CSS_SELECTOR, ".fa-search, [class*='search']")
+                driver.execute_script("arguments[0].click();", search_icon)
+                time.sleep(1)
+            except: pass
 
-            # Αναμονή για το γράφημα Highcharts
-            time.sleep(6)
+            # 3. Πληκτρολόγηση και ENTER (δεν ψάχνουμε τυφλά)
+            search_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@type='text' or contains(@class, 'search') or contains(@placeholder, 'Search')]")))
+            search_input.clear()
+            search_input.send_keys(station)
+            search_input.send_keys(Keys.ENTER)
+            
+            # 4. Αναμονή να φορτώσει το γράφημα Highcharts (Το "Ζουμί")
+            time.sleep(7) 
 
-            # Εύρεση Max/Min και Hover
+            # 5. Υπολογισμός Max/Min & Φωτογράφιση
             js_indices = """
             var chart = Highcharts.charts[0];
             if (!chart) return null;
@@ -98,24 +74,32 @@ try:
             """
             indices = driver.execute_script(js_indices)
 
-            if not indices:
-                 print(f"Το διάγραμμα για το {name} δεν φόρτωσε σωστά.")
-                 continue
+            if indices:
+                driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].data[{indices['maxIdx']}]);")
+                time.sleep(1)
+                driver.save_screenshot(f"screenshots/{today}/{station}_MAX.png")
 
-            # Τραβάμε τα Screenshots
-            driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].data[{indices['maxIdx']}]);")
-            time.sleep(1)
-            driver.save_screenshot(f"{save_path}/{name.replace(' ', '_')}_MAX.png")
-            print(f"-> {name} MAX OK")
+                driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].data[{indices['minIdx']}]);")
+                time.sleep(1)
+                driver.save_screenshot(f"screenshots/{today}/{station}_MIN.png")
+                print(f"ΕΠΙΤΥΧΙΑ: {station}")
+            else:
+                print(f"Αποτυχία: Το γράφημα δεν άνοιξε για {station}")
 
-            driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].data[{indices['minIdx']}]);")
-            time.sleep(1)
-            driver.save_screenshot(f"{save_path}/{name.replace(' ', '_')}_MIN.png")
-            print(f"-> {name} MIN OK")
+            # Ανανέωση της σελίδας για να καθαρίσει το τοπίο για τον επόμενο σταθμό
+            driver.refresh()
+            time.sleep(6)
+            driver.execute_script("""
+                document.querySelectorAll('*').forEach(el => {
+                    var style = window.getComputedStyle(el);
+                    if(style.position === 'fixed' || style.position === 'sticky') el.remove();
+                });
+            """)
 
         except Exception as e:
-            print(f"Σφάλμα κατά την επεξεργασία του {name}: {e}")
-            
+            print(f"Σφάλμα στο {station}: {e}")
+            driver.refresh()
+            time.sleep(6)
+
 finally:
     driver.quit()
-    print("Η διαδικασία ολοκληρώθηκε.")
