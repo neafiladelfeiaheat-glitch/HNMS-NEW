@@ -3,6 +3,7 @@ from selenium.webdriver.chrome.options import Options
 import time
 import json
 import os
+import sys
 
 chrome_options = Options()
 chrome_options.add_argument('--headless')
@@ -17,9 +18,10 @@ chrome_options.add_argument(f'user-agent={user_agent}')
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
-    print("Εκκίνηση... Εξαγωγή Λίστας Σταθμών...")
+    print("Εκκίνηση Extractor...")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(12) 
+    # Αυξάνουμε την αναμονή στα 20 δευτερόλεπτα για σιγουριά
+    time.sleep(20) 
 
     js_get_leaflet_data = """
     try {
@@ -39,16 +41,16 @@ try:
         map.eachLayer(function(layer) {
             if(layer._popup && typeof layer._popup._content === 'string') {
                 var content = layer._popup._content;
-                var matchId = content.match(/selectStation\s*\((\d+)\)/); // Βρίσκει το ID
+                var matchId = content.match(/selectStation\\s*\\((\\d+)\\)/);
                 var tempDiv = document.createElement('div');
                 tempDiv.innerHTML = content;
                 var text = tempDiv.textContent || tempDiv.innerText;
-                var name = text.split('\\n')[0].trim(); // Βρίσκει το όνομα
+                var name = text.split('\\n')[0].trim();
                 
                 if (matchId && name) {
                     stations.push({
                         id: matchId[1],
-                        name: name.replace(' ', '_').replace('/', '_')
+                        name: name.replace(/[^a-zA-Z0-9α-ωΑ-Ω]/g, '_')
                     });
                 }
             }
@@ -59,25 +61,27 @@ try:
     
     stations_data = driver.execute_script(js_get_leaflet_data)
     
-    if stations_data:
-        # Προσθέτουμε το Ελληνικό (συνήθως ID 68 ή 104) χειροκίνητα
-        stations_data.append({"id": "68", "name": "ΕΛΛΗΝΙΚΟ"}) 
-        # Αφαίρεση διπλοτύπων
-        seen = set()
-        unique_stations = []
-        for s in stations_data:
-            if s['id'] not in seen:
-                seen.add(s['id'])
-                unique_stations.append(s)
-                
-        # Σώζουμε σε JSON αρχείο
-        with open('stations.json', 'w', encoding='utf-8') as f:
-            json.dump(unique_stations, f, ensure_ascii=False, indent=4)
-        print(f"ΕΠΙΤΥΧΙΑ: Εξήχθησαν {len(unique_stations)} σταθμοί στο stations.json")
-    else:
-        print("Σφάλμα: Δεν βρέθηκαν σταθμοί.")
+    if not stations_data or len(stations_data) == 0:
+        print("ΣΦΑΛΜΑ: Δεν βρέθηκαν σταθμοί στον χάρτη!")
+        sys.exit(1) # Αναγκάζουμε το Workflow να σταματήσει εδώ
+
+    # Προσθήκη Ελληνικού
+    stations_data.append({"id": "68", "name": "ELLINIKO"})
+    
+    seen = set()
+    unique_stations = []
+    for s in stations_data:
+        if s['id'] not in seen:
+            seen.add(s['id'])
+            unique_stations.append(s)
+
+    with open('stations.json', 'w', encoding='utf-8') as f:
+        json.dump(unique_stations, f, ensure_ascii=False)
+    
+    print(f"ΕΠΙΤΥΧΙΑ: {len(unique_stations)} σταθμοί έτοιμοι.")
 
 except Exception as e:
-    print(f"Σφάλμα κατά την εξαγωγή: {e}")
+    print(f"Crash: {e}")
+    sys.exit(1)
 finally:
     driver.quit()
