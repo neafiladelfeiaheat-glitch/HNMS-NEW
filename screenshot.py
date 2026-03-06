@@ -2,139 +2,116 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import time
 import os
+import sys
 from datetime import datetime
+
+# Λαμβάνουμε το ID και το Όνομα του σταθμού ως ορίσματα από το GitHub
+if len(sys.argv) < 3:
+    print("Σφάλμα: Απαιτούνται ID και Όνομα σταθμού.")
+    sys.exit(1)
+
+station_id = sys.argv[1]
+station_name = sys.argv[2]
 
 chrome_options = Options()
 chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
-chrome_options.add_argument('--window-size=1920,3000')
-
-# Η Ασπίδα SSL για να περνάμε τον τοίχο της ΕΜΥ
+chrome_options.add_argument('--window-size=1920,1080') # Δεν χρειάζεται γίγαντας
 chrome_options.add_argument('--ignore-certificate-errors')
 chrome_options.add_argument('--ignore-ssl-errors')
 chrome_options.accept_insecure_certs = True
-
 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 chrome_options.add_argument(f'user-agent={user_agent}')
 
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
-    print("ΕΚΚΙΝΗΣΗ: Μηχανική Σάρωση Όλων των Σταθμών (Native Mouse)...")
+    print(f"[{station_name}] Επεξεργασία (ID: {station_id})...")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(15) # Περιμένουμε να φορτώσει πλήρως ο χάρτης
+    time.sleep(12) 
 
     today = datetime.now().strftime("%Y-%m-%d")
-    os.makedirs(f"screenshots/{today}", exist_ok=True)
+    save_path = f"screenshots/{today}"
+    os.makedirs(save_path, exist_ok=True)
 
-    # 1. ΦΩΤΟΓΡΑΦΙΑ ΑΣΦΑΛΕΙΑΣ (Για να μην είναι ποτέ άδειος ο φάκελος)
-    driver.save_screenshot(f"screenshots/{today}/00_PROOF_OF_LIFE.png")
-    print("Βγήκε η αρχική φωτογραφία! Ο φάκελος δημιουργήθηκε.")
-
-    # 2. Καθαρισμός Cookies
+    # 1. Σκοτώνουμε τα cookies
     driver.execute_script("""
         document.querySelectorAll('*').forEach(el => {
             var s = window.getComputedStyle(el);
             if(s.position === 'fixed' || s.position === 'sticky' || el.id.includes('cookie')) el.remove();
         });
     """)
-    time.sleep(2)
+    time.sleep(1)
 
-    # 3. Μετράμε πόσες πινέζες έχει ο χάρτης
-    num_pins = driver.execute_script("return document.querySelectorAll('.leaflet-marker-icon').length;")
-    print(f"ΒΡΕΘΗΚΑΝ ΣΥΝΟΛΙΚΑ {num_pins} ΠΙΝΕΖΕΣ! Ξεκινάω τη σάρωση...")
-
-    if num_pins == 0:
-        print("ΠΡΟΕΙΔΟΠΟΙΗΣΗ: Δεν βρέθηκαν πινέζες. Κάτι μπλοκάρει τον χάρτη.")
-
-    # 4. ΣΑΡΩΣΗ ΜΙΑ-ΜΙΑ ΤΙΣ ΠΙΝΕΖΕΣ (Σαν άνθρωπος)
-    for i in range(num_pins):
-        station_name = f"Station_{i}"
-        try:
-            # Επιστροφή στην κορυφή για να πατήσουμε την πινέζα
-            driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(1)
-            
-            # Κλικ στην πινέζα
-            driver.execute_script(f"document.querySelectorAll('.leaflet-marker-icon')[{i}].click();")
-            time.sleep(2.5) # Αναμονή να ανοίξει το popup και να φορτώσουν τα δεδομένα
-
-            # Ανάγνωση του ονόματος του σταθμού
-            js_name = "var p = document.querySelector('.leaflet-popup-content, .card'); return p ? p.innerText.split('\\n')[0].trim() : 'Unknown';"
-            station_name = driver.execute_script(js_name).replace('/', '_').replace(' ', '_')
-            print(f"\n[{i+1}/{num_pins}] Επεξεργασία: {station_name}")
-
-            # Σκρολ κάτω στο Διάγραμμα
-            driver.execute_script("window.scrollBy(0, 850);")
-            time.sleep(4) # Αναμονή να σχεδιαστεί η καμπύλη
-
-            # 5. ΤΟ ΑΝΘΡΩΠΙΝΟ ΧΕΡΙ (Native JS Mouse Event)
-            js_hover = """
-            var isMax = arguments[0];
-            var chart = Highcharts.charts.find(c => c && c.series && c.series[0].points);
-            if (!chart) return false;
-            
-            var points = chart.series[0].points;
-            var target = null;
-            for(var j=0; j<points.length; j++) {
-                if(points[j].y !== null) {
-                    if(target === null) target = points[j];
-                    else if(isMax && points[j].y > target.y) target = points[j];
-                    else if(!isMax && points[j].y < target.y) target = points[j];
-                }
-            }
-            if(!target) return false;
-
-            // Δημιουργούμε ένα ΑΛΗΘΙΝΟ ψηφιακό κλικ/κίνηση ποντικιού
-            var rect = chart.container.getBoundingClientRect();
-            var clientX = rect.left + chart.plotLeft + target.plotX;
-            var clientY = rect.top + chart.plotTop + target.plotY;
-            var evt = new MouseEvent('mousemove', {
-                clientX: clientX, clientY: clientY, bubbles: true, cancelable: true, view: window
-            });
-            chart.container.dispatchEvent(evt);
-            
-            // Back-up εντολή API για σιγουριά
-            try {
-                chart.tooltip.refresh(target);
-                target.setState('hover');
-                chart.xAxis[0].drawCrosshair(null, target);
-            } catch(e) {}
-            
+    # 2. ΤΟ ΜΑΓΙΚΟ ID: Επιλογή σταθμού απευθείας από το dropdown
+    js_select_station = f"""
+    try {{
+        var select = document.querySelector('select.form-control');
+        if (select) {{
+            select.value = '{station_id}';
+            select.dispatchEvent(new Event('change', {{ bubbles: true }}));
             return true;
-            """
+        }}
+        return false;
+    }} catch(e) {{ return false; }}
+    """
+    
+    success_selection = driver.execute_script(js_select_station)
+    
+    if not success_selection:
+        print(f"[{station_name}] Σφάλμα: Δεν μπόρεσα να επιλέξω τον σταθμό με ID {station_id}.")
+        driver.save_screenshot(f"{save_path}/ERROR_{station_name}_SELECTION.png")
+        sys.exit(1)
 
-            # Φωτογραφία MAX
-            success_max = driver.execute_script(js_hover, True)
-            time.sleep(1.5)
-            if success_max:
-                driver.save_screenshot(f"screenshots/{today}/{station_name}_MAX.png")
-            else:
-                driver.save_screenshot(f"screenshots/{today}/ERROR_{station_name}_MAX.png")
+    # 3. Περιμένουμε το διάγραμμα Highcharts (δεν χρειάζεται σκρολ πια, είναι ορατό)
+    time.sleep(8) 
+    
+    # 4. ΤΟ ΑΠΟΛΥΤΟ NATIVE JS HOVER
+    js_native_hover = """
+    try {
+        var isMax = arguments[0];
+        var chart = Highcharts.charts.find(c => c && c.series && c.series[0].points);
+        if (!chart) return false;
+        var points = chart.series[0].points;
+        var target = null;
+        for(var j=0; j<points.length; j++) {
+            if(points[j].y !== null) {
+                if(target === null) target = points[j];
+                else if(isMax && points[j].y > target.y) target = points[j];
+                else if(!isMax && points[j].y < target.y) target = points[j];
+            }
+        }
+        if(!target) return false;
+        var rect = chart.container.getBoundingClientRect();
+        var clientX = rect.left + chart.plotLeft + target.plotX;
+        var clientY = rect.top + chart.plotTop + target.plotY;
+        var evt = new MouseEvent('mousemove', {
+            clientX: clientX, clientY: clientY, bubbles: true, cancelable: true, view: window
+        });
+        chart.container.dispatchEvent(evt);
+        return true;
+    } catch(e) { return false; }
+    """
 
-            # Φωτογραφία MIN
-            success_min = driver.execute_script(js_hover, False)
-            time.sleep(1.5)
-            if success_min:
-                driver.save_screenshot(f"screenshots/{today}/{station_name}_MIN.png")
-            else:
-                driver.save_screenshot(f"screenshots/{today}/ERROR_{station_name}_MIN.png")
+    # Φωτογραφία MAX
+    if driver.execute_script(js_native_hover, True):
+        time.sleep(1.5)
+        driver.save_screenshot(f"{save_path}/{station_name}_MAX.png")
+    else:
+        driver.save_screenshot(f"{save_path}/ERROR_{station_name}_MAX.png")
 
-            print(f"[{station_name}] Επιτυχία!")
+    # Φωτογραφία MIN
+    if driver.execute_script(js_native_hover, False):
+        time.sleep(1.5)
+        driver.save_screenshot(f"{save_path}/{station_name}_MIN.png")
+    else:
+        driver.save_screenshot(f"{save_path}/ERROR_{station_name}_MIN.png")
 
-        except Exception as e:
-            print(f"[{station_name}] Σφάλμα: {e}")
-            driver.save_screenshot(f"screenshots/{today}/CRASH_{station_name}.png")
+    print(f"[{station_name}] Ολοκληρώθηκε ΕΠΙΤΥΧΩΣ.")
 
-        finally:
-            # Επιστροφή πάνω και κλείσιμο του popup για να καθαρίσει ο χάρτης
-            driver.execute_script("window.scrollTo(0, 0);")
-            driver.execute_script("var closeBtn = document.querySelector('.leaflet-popup-close-button'); if(closeBtn) closeBtn.click();")
-            time.sleep(1)
-
-except Exception as general_e:
-    print(f"Γενικό Σφάλμα Συστήματος: {general_e}")
+except Exception as e:
+    print(f"[{station_name}] Κράσαρε: {e}")
+    # Δεν βγάζουμε screenshot κράσαρματος εδώ για να μην γεμίζει ο φάκελος
 finally:
     driver.quit()
-    print("Η διαδικασία ολοκληρώθηκε.")
