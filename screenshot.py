@@ -1,7 +1,5 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
 import time
 import os
 from datetime import datetime
@@ -10,9 +8,9 @@ chrome_options = Options()
 chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
-chrome_options.add_argument('--window-size=1920,3000')
+chrome_options.add_argument('--window-size=1920,3000') # Γιγάντια οθόνη
 
-# SSL Bypass
+# SSL Bypass - Η ασπίδα μας 
 chrome_options.add_argument('--ignore-certificate-errors')
 chrome_options.add_argument('--ignore-ssl-errors')
 chrome_options.accept_insecure_certs = True
@@ -24,14 +22,14 @@ driver = webdriver.Chrome(options=chrome_options)
 target_stations = ["ΕΛΛΗΝΙΚΟ", "ΚΑΣΟΣ", "ΣΠΑΡΤΗ"]
 
 try:
-    print("Εκκίνηση... Εφαρμογή γεωμετρικής ανάλυσης και φυσικών κλικ.")
+    print("Εκκίνηση... Διόρθωση Πινεζών και Tooltip!")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(15) # Περιμένουμε τον χάρτη
+    time.sleep(12) 
 
     today = datetime.now().strftime("%Y-%m-%d")
     os.makedirs(f"screenshots/{today}", exist_ok=True)
 
-    # Σκοτώνουμε τα ενοχλητικά cookies
+    # Σκοτώνουμε τα cookies
     driver.execute_script("""
         document.querySelectorAll('*').forEach(el => {
             var s = window.getComputedStyle(el);
@@ -43,91 +41,83 @@ try:
     for station in target_stations:
         print(f"\n--- Επεξεργασία: {station} ---")
         
-        # 1. ΒΡΙΣΚΟΥΜΕ ΤΗΝ ΠΙΝΕΖΑ (Αν δεν είναι το Ελληνικό που ανοίγει αυτόματα)
+        # 1. ΒΡΙΣΚΟΥΜΕ ΤΗΝ ΠΙΝΕΖΑ (Με έξυπνο κλείσιμο)
         if station != "ΕΛΛΗΝΙΚΟ":
-            print(f"Ψάχνω την πινέζα για {station} με φυσικά κλικ...")
-            pins_count = driver.execute_script("return document.querySelectorAll('.leaflet-marker-icon').length;")
-            found = False
+            print(f"Ψάχνω την πινέζα για {station}...")
+            js_find_pin = f"""
+            var cb = arguments[arguments.length - 1]; 
+            var target = '{station}';
+            var pins = document.querySelectorAll('.leaflet-marker-icon, img[src*="marker"]');
+            if (pins.length === 0) {{ cb("NO_PINS"); return; }}
             
-            for i in range(pins_count):
-                try:
-                    # Κλικ στην πινέζα
-                    driver.execute_script(f"document.querySelectorAll('.leaflet-marker-icon')[{i}].click();")
-                    time.sleep(1) # Χρόνος να ανοίξει το popup
+            (async function() {{
+                for(var i=0; i<pins.length; i++) {{
+                    try {{ pins[i].click(); }} catch(e) {{}}
+                    await new Promise(r => setTimeout(r, 1000)); // Περιμένουμε το popup
                     
-                    # Διαβάζουμε το κείμενο
-                    popup_text = driver.execute_script("var p = document.querySelector('.leaflet-popup-content, .info, .card'); return p ? p.textContent.toUpperCase() : '';")
+                    var popup = document.querySelector('.leaflet-popup-content, .card, .info');
+                    if (popup && popup.textContent.toUpperCase().includes(target)) {{
+                        cb("FOUND");
+                        return;
+                    }}
                     
-                    if station in popup_text:
-                        found = True
-                        print(f"ΒΡΕΘΗΚΕ Η ΠΙΝΕΖΑ ΓΙΑ: {station}!")
-                        break
-                        
-                    # Κλείνουμε το λάθος popup για να μην μπλοκάρει την επόμενη πινέζα!
-                    driver.execute_script("var cls = document.querySelector('.leaflet-popup-close-button'); if(cls) cls.click();")
-                    time.sleep(0.5)
-                except:
-                    continue
+                    // ΑΝ ΔΕΝ ΕΙΝΑΙ ΣΩΣΤΟ: Πατάμε το X για να κλείσει και να μην μπλοκάρει
+                    var closeBtn = document.querySelector('.leaflet-popup-close-button');
+                    if(closeBtn) {{ closeBtn.click(); }}
+                    else {{
+                        var mapBg = document.querySelector('.leaflet-container');
+                        if(mapBg) {{ mapBg.click(); }}
+                    }}
+                    await new Promise(r => setTimeout(r, 500));
+                }}
+                cb("NOT_FOUND");
+            }})();
+            """
+            driver.set_script_timeout(180) # Δίνουμε 3 λεπτά για να δοκιμάσει όλες τις πινέζες
+            result = driver.execute_async_script(js_find_pin)
             
-            if not found:
-                print(f"Αποτυχία: Δεν βρέθηκε πινέζα για {station}.")
+            if result != "FOUND":
+                print(f"Αποτυχία: Δεν βρέθηκε η πινέζα για {station}.")
                 driver.save_screenshot(f"screenshots/{today}/ERROR_PIN_{station}.png")
                 continue
+            else:
+                print(f"Βρέθηκε η πινέζα για {station}! Σκρολάρω...")
 
         # 2. ΣΚΡΟΛ ΣΤΟ ΔΙΑΓΡΑΜΜΑ
-        print("Σκρολάρω στο διάγραμμα...")
-        driver.execute_script("window.scrollBy(0, 800);")
-        time.sleep(6) # Περιμένουμε να σχεδιαστεί η καμπύλη
+        driver.execute_script("window.scrollBy(0, 850);")
+        time.sleep(6) # Περιμένουμε να σχεδιαστεί 
         
-        # 3. ΓΕΩΜΕΤΡΙΚΗ ΑΝΑΛΥΣΗ ΤΗΣ ΚΑΜΠΥΛΗΣ (Bypass προστασίας Highcharts)
-        js_find_points = """
-        var path = document.querySelector('.highcharts-graph');
-        if (!path) return null;
-        var d = path.getAttribute('d');
-        var points = [];
-        var parts = d.split(' ');
-        var i = 0;
-        while (i < parts.length) {
-            if (parts[i] === 'M' || parts[i] === 'L') {
-                var x = parseFloat(parts[i+1]);
-                var y = parseFloat(parts[i+2]);
-                if (!isNaN(x) && !isNaN(y)) points.push({x: x, y: y});
-                i += 3;
-            } else { i++; }
-        }
-        if (points.length === 0) return null;
+        # 3. Ο ΜΟΝΑΔΙΚΟΣ ΣΩΣΤΟΣ ΤΡΟΠΟΣ ΓΙΑ ΤΟ HOVER ΣΤΟ HIGHCHARTS
+        js_get_indices = """
+        if(typeof Highcharts === 'undefined' || !Highcharts.charts || !Highcharts.charts[0]) return null;
+        var points = Highcharts.charts[0].series[0].points; // Εδώ ήταν το λάθος μου! Πρέπει να είναι .points
+        if(!points || points.length === 0) return null;
         
-        var maxT = points[0]; // Min Y = Max Temp
-        var minT = points[0]; // Max Y = Min Temp
-        for (var j = 1; j < points.length; j++) {
-            if (points[j].y < maxT.y) maxT = points[j];
-            if (points[j].y > minT.y) minT = points[j];
+        var maxIdx = 0;
+        var minIdx = 0;
+        for(var i=1; i<points.length; i++) {
+            if(points[i].y !== null && points[maxIdx].y !== null && points[i].y > points[maxIdx].y) maxIdx = i;
+            if(points[i].y !== null && points[minIdx].y !== null && points[i].y < points[minIdx].y) minIdx = i;
         }
-        return {maxX: maxT.x, maxY: maxT.y, minX: minT.x, minY: minT.y};
+        return {max: maxIdx, min: minIdx};
         """
-        
-        indices = driver.execute_script(js_find_points)
+        indices = driver.execute_script(js_get_indices)
 
         if indices:
-            print("Τα γεωμετρικά σημεία βρέθηκαν. Κουνάω το ποντίκι...")
-            action = ActionChains(driver)
-            svg_element = driver.find_element(By.CSS_SELECTOR, '.highcharts-root')
-            
-            # Φυσική κίνηση ποντικιού στο Max
-            action.move_to_element_with_offset(svg_element, int(indices['maxX']), int(indices['maxY'])).perform()
-            time.sleep(1.5)
+            # Τώρα ξυπνάει το tooltip με 100% επιτυχία
+            driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].points[{indices['max']}]);")
+            time.sleep(1)
             driver.save_screenshot(f"screenshots/{today}/{station}_MAX.png")
 
-            # Φυσική κίνηση ποντικιού στο Min
-            action.move_to_element_with_offset(svg_element, int(indices['minX']), int(indices['minY'])).perform()
-            time.sleep(1.5)
+            driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].points[{indices['min']}]);")
+            time.sleep(1)
             driver.save_screenshot(f"screenshots/{today}/{station}_MIN.png")
-            print(f"ΕΠΙΤΥΧΙΑ: {station} αποθηκεύτηκε!")
+            print(f"ΕΠΙΤΥΧΙΑ: {station} (Τα διαγράμματα βγήκαν!)")
         else:
-            print(f"Σφάλμα: Δεν βρέθηκε η γραμμή του διαγράμματος για {station}")
+            print(f"Σφάλμα: Το διάγραμμα δεν φορτώθηκε για {station}")
             driver.save_screenshot(f"screenshots/{today}/ERROR_CHART_{station}.png")
         
-        # 4. Refresh για να ξεκινήσουμε "καθαροί" τον επόμενο σταθμό
+        # 4. Ανανέωση σελίδας
         driver.refresh()
         time.sleep(10)
         driver.execute_script("""
