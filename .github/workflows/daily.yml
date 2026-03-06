@@ -1,37 +1,28 @@
-name: Daily EMY Automation (Matrix V3)
+name: Daily EMY Automation (Matrix V5)
 
 on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: ΕΞΑΓΩΓΗ ΛΙΣΤΑΣ
   extract-list:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    - name: Install Dependencies
-      run: pip install selenium
     - name: Run Extractor
-      run: python extract_stations.py
-    - id: set-matrix
-      # Χρησιμοποιούμε ασφαλή τρόπο για μεταφορά του JSON
+      id: set-matrix
       run: |
-        JSON=$(cat stations.json)
-        echo "matrix=$JSON" >> $GITHUB_OUTPUT
+        python extract_stations.py
+        # Μετατρέπουμε το JSON σε μία γραμμή για το Matrix
+        echo "matrix=$(cat stations.json)" >> $GITHUB_OUTPUT
 
-  # JOB 2: ΤΑΥΤΟΧΡΟΝΗ ΣΑΡΩΣΗ (Workers)
   run-workers:
     needs: extract-list
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 15
       matrix:
         station: ${{ fromJson(needs.extract-list.outputs.matrix) }}
     steps:
@@ -40,27 +31,26 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-    - name: Install Dependencies
+    - name: Install Selenium
       run: pip install selenium
     - name: Execute for ${{ matrix.station.name }}
       run: python screenshot.py ${{ matrix.station.id }} "${{ matrix.station.name }}"
     - name: Upload Artifact
-      # Ανεβάζουμε τη φωτογραφία στον "κουμπαρά"
       uses: actions/upload-artifact@v4
       with:
         name: screenshot-${{ matrix.station.id }}
         path: screenshots/
         retention-days: 1
 
-  # JOB 3: ΤΕΛΙΚΟ ΜΑΖΕΜΑ & PUSH
   final-commit:
     needs: run-workers
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
     - uses: actions/checkout@v4
-    - name: Download All Screenshots
+    - name: Download All
       uses: actions/download-artifact@v4
       with:
         path: all_screenshots
@@ -73,5 +63,5 @@ jobs:
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
         git add screenshots/
-        git commit -m "Update All Stations: $(date +'%Y-%m-%d')" || echo "No changes"
+        git commit -m "Update: $(date +'%Y-%m-%d')" || echo "No changes"
         git push
