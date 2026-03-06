@@ -1,8 +1,7 @@
 import json
 import sys
 
-# Η Hardcoded λίστα ασφαλείας με τους σημαντικότερους σταθμούς
-# Αν ο extractor αποτύχει, θα τρέξουν τουλάχιστον αυτοί!
+# Η Hardcoded λίστα ασφαλείας - Διορθωμένη 100%
 fallback_stations = [
     {"id": "68", "name": "ELLINIKO"},
     {"id": "119", "name": "KASOS"},
@@ -13,7 +12,7 @@ fallback_stations = [
     {"id": "84", "name": "KALAMATA"},
     {"id": "97", "name": "KYTHIRA"},
     {"id": "52", "name": "LARISA"},
-    {"id": "124": "name": "TYMPAKI"},
+    {"id": "124", "name": "TYMPAKI"},
     {"id": "111", "name": "RODOS"},
     {"id": "74", "name": "TANAGRA"},
     {"id": "59", "name": "ANCHIALOS"},
@@ -34,7 +33,6 @@ fallback_stations = [
 ]
 
 try:
-    # Προσπαθούμε να σώσουμε τη λίστα σε JSON
     with open('stations.json', 'w', encoding='utf-8') as f:
         json.dump(fallback_stations, f, ensure_ascii=False)
     print(f"ΕΠΙΤΥΧΙΑ: Δημιουργήθηκε λίστα με {len(fallback_stations)} σταθμούς.")
