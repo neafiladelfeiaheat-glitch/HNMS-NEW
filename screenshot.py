@@ -1,5 +1,6 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 import time
 import os
 from datetime import datetime
@@ -10,7 +11,7 @@ chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
 chrome_options.add_argument('--window-size=1920,3000')
 
-# Η Ασπίδα για τον κόκκινο τοίχο του SSL
+# Η Ασπίδα SSL 
 chrome_options.add_argument('--ignore-certificate-errors')
 chrome_options.add_argument('--ignore-ssl-errors')
 chrome_options.accept_insecure_certs = True
@@ -22,14 +23,14 @@ driver = webdriver.Chrome(options=chrome_options)
 target_stations = ["ΕΛΛΗΝΙΚΟ", "ΚΑΣΟΣ", "ΣΠΑΡΤΗ"]
 
 try:
-    print("Εκκίνηση με Αλεξίσφαιρη Προστασία...")
+    print("--- ZERO BASE ΕΚΚΙΝΗΣΗ ---")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(12) 
+    time.sleep(15) 
 
     today = datetime.now().strftime("%Y-%m-%d")
     os.makedirs(f"screenshots/{today}", exist_ok=True)
 
-    # Σκοτώνουμε τα cookies
+    # Καθαρισμός ενοχλητικών στοιχείων
     driver.execute_script("""
         document.querySelectorAll('*').forEach(el => {
             var s = window.getComputedStyle(el);
@@ -39,94 +40,90 @@ try:
     time.sleep(2)
 
     for station in target_stations:
-        print(f"\n--- Επεξεργασία: {station} ---")
+        print(f"\n[{station}] Ξεκινάει η διαδικασία...")
         
-        # ΤΟ ΑΜΟΡΤΙΣΕΡ: Αν κάτι πάει στραβά, πιάνει το λάθος και ΔΕΝ σκάει το πρόγραμμα!
         try:
+            # 1. ΜΗΔΕΝΙΚΗ ΒΑΣΗ ΓΙΑ ΤΙΣ ΠΙΝΕΖΕΣ (Σταθερός έλεγχος 1 προς 1)
             if station != "ΕΛΛΗΝΙΚΟ":
-                print(f"Ψάχνω την πινέζα για {station}...")
-                js_find_pin = f"""
-                var cb = arguments[arguments.length - 1]; 
-                var target = '{station}';
-                var pins = document.querySelectorAll('.leaflet-marker-icon, img[src*="marker"]');
-                if (pins.length === 0) {{ cb("NO_PINS"); return; }}
+                pins = driver.find_elements(By.CSS_SELECTOR, '.leaflet-marker-icon, img[src*="marker"]')
+                print(f"[{station}] Βρέθηκαν {len(pins)} πινέζες. Ψάχνω μία-μία...")
+                found = False
                 
-                (async function() {{
-                    // ΓΡΗΓΟΡΗ ΑΝΑΖΗΤΗΣΗ: Ελέγχει πρώτα αν το όνομα υπάρχει κρυμμένο πάνω στην πινέζα
-                    for(var i=0; i<pins.length; i++) {{
-                        if((pins[i].alt && pins[i].alt.toUpperCase().includes(target)) || 
-                           (pins[i].title && pins[i].title.toUpperCase().includes(target))) {{
-                            pins[i].click();
-                            await new Promise(r => setTimeout(r, 1000));
-                            cb("FOUND");
-                            return;
-                        }}
-                    }}
-                    
-                    // ΚΑΝΟΝΙΚΗ ΑΝΑΖΗΤΗΣΗ (πιο γρήγορα κλικ)
-                    for(var i=0; i<pins.length; i++) {{
-                        try {{ pins[i].click(); }} catch(e) {{}}
-                        await new Promise(r => setTimeout(r, 600)); 
+                for idx, pin in enumerate(pins):
+                    try:
+                        driver.execute_script("arguments[0].click();", pin)
+                        time.sleep(1.2) # Δίνουμε χρόνο να ανοίξει σίγουρα το popup
                         
-                        var popup = document.querySelector('.leaflet-popup-content, .card, .info');
-                        if (popup && popup.textContent.toUpperCase().includes(target)) {{
-                            cb("FOUND");
-                            return;
-                        }}
-                        
-                        // Κλείνει το λάθος popup
-                        var closeBtn = document.querySelector('.leaflet-popup-close-button');
-                        if(closeBtn) {{ closeBtn.click(); }}
-                    }}
-                    cb("NOT_FOUND");
-                }})();
-                """
-                driver.set_script_timeout(150)
-                result = driver.execute_async_script(js_find_pin)
+                        popups = driver.find_elements(By.CSS_SELECTOR, '.leaflet-popup-content, .card, .info')
+                        if popups:
+                            text = popups[0].text.upper()
+                            if station in text:
+                                found = True
+                                print(f"[{station}] ΒΡΕΘΗΚΕ! (Πινέζα {idx+1})")
+                                break
+                            
+                            # ΑΝ ΔΕΝ ΕΙΝΑΙ ΣΩΣΤΗ: Κλείνουμε ΥΠΟΧΡΕΩΤΙΚΑ το popup
+                            close_btns = driver.find_elements(By.CSS_SELECTOR, '.leaflet-popup-close-button')
+                            if close_btns:
+                                driver.execute_script("arguments[0].click();", close_btns[0])
+                                time.sleep(0.5)
+                    except Exception as e:
+                        continue
                 
-                if result != "FOUND":
-                    print(f"Αποτυχία: Δεν βρέθηκε η πινέζα για {station}.")
+                if not found:
+                    print(f"[{station}] ΑΠΟΤΥΧΙΑ: Δεν βρέθηκε πουθενά.")
                     driver.save_screenshot(f"screenshots/{today}/ERROR_PIN_{station}.png")
                     continue
-                else:
-                    print(f"Βρέθηκε η πινέζα για {station}! Σκρολάρω...")
 
-            # Σκρολ στο διάγραμμα
+            # 2. ΣΚΡΟΛ ΣΤΟ ΔΙΑΓΡΑΜΜΑ
             driver.execute_script("window.scrollBy(0, 850);")
             time.sleep(6) 
             
-            # Highcharts Hover με το .points (Ο σωστός τρόπος)
-            js_get_indices = """
-            if(typeof Highcharts === 'undefined' || !Highcharts.charts || !Highcharts.charts[0]) return null;
-            var points = Highcharts.charts[0].series[0].points;
-            if(!points || points.length === 0) return null;
-            
-            var maxIdx = 0;
-            var minIdx = 0;
-            for(var i=1; i<points.length; i++) {
-                if(points[i].y !== null && points[maxIdx].y !== null && points[i].y > points[maxIdx].y) maxIdx = i;
-                if(points[i].y !== null && points[minIdx].y !== null && points[i].y < points[minIdx].y) minIdx = i;
-            }
-            return {max: maxIdx, min: minIdx};
+            # 3. ΜΗΔΕΝΙΚΗ ΒΑΣΗ ΓΙΑ HIGHCHARTS (Βίαιη ενεργοποίηση Tooltip & Crosshair)
+            js_highcharts = """
+            try {
+                var chart = Highcharts.charts.find(c => c && c.series);
+                if(!chart) return false;
+                var series = chart.series.find(s => s.visible && s.data.length > 0 && s.points);
+                if(!series) return false;
+                
+                var points = series.points;
+                var target = points[0];
+                for(var i=1; i<points.length; i++) {
+                    if(points[i].y !== null && points[i].y ARG target.y) {
+                        target = points[i];
+                    }
+                }
+                
+                // Το απόλυτο bypass: Ξυπνάμε tooltip, crosshair και hover state ταυτόχρονα
+                chart.tooltip.refresh(target);
+                if(chart.xAxis[0]) chart.xAxis[0].drawCrosshair(null, target);
+                target.setState('hover');
+                return true;
+            } catch(e) { return false; }
             """
-            indices = driver.execute_script(js_get_indices)
-
-            if indices:
-                driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].points[{indices['max']}]);")
-                time.sleep(1)
-                driver.save_screenshot(f"screenshots/{today}/{station}_MAX.png")
-
-                driver.execute_script(f"Highcharts.charts[0].tooltip.refresh(Highcharts.charts[0].series[0].points[{indices['min']}]);")
-                time.sleep(1)
-                driver.save_screenshot(f"screenshots/{today}/{station}_MIN.png")
-                print(f"ΕΠΙΤΥΧΙΑ: {station}")
-            else:
-                print(f"Σφάλμα: Το διάγραμμα δεν φορτώθηκε για {station}")
-                driver.save_screenshot(f"screenshots/{today}/ERROR_CHART_{station}.png")
             
-            # Ανανέωση σελίδας για τον επόμενο
+            # MAX
+            success_max = driver.execute_script(js_highcharts.replace("ARG", ">"))
+            if success_max:
+                time.sleep(1.5)
+                driver.save_screenshot(f"screenshots/{today}/{station}_MAX.png")
+            else:
+                driver.save_screenshot(f"screenshots/{today}/ERROR_CHART_{station}_MAX.png")
+
+            # MIN
+            success_min = driver.execute_script(js_highcharts.replace("ARG", "<"))
+            if success_min:
+                time.sleep(1.5)
+                driver.save_screenshot(f"screenshots/{today}/{station}_MIN.png")
+            else:
+                driver.save_screenshot(f"screenshots/{today}/ERROR_CHART_{station}_MIN.png")
+
+            print(f"[{station}] ΟΛΟΚΛΗΡΩΘΗΚΕ!")
+
+            # Ανανέωση σελίδας για να έχουμε καθαρό χάρτη για τον επόμενο
             driver.refresh()
-            time.sleep(8)
+            time.sleep(10)
             driver.execute_script("""
                 document.querySelectorAll('*').forEach(el => {
                     var s = window.getComputedStyle(el);
@@ -135,13 +132,12 @@ try:
             """)
 
         except Exception as e:
-            # ΑΝ ΚΑΤΙ ΠΑΕΙ ΣΤΡΑΒΑ, ΠΙΑΝΕΙ ΤΟ ΛΑΘΟΣ ΕΔΩ ΚΑΙ ΔΕΝ ΣΚΑΕΙ ΟΛΟ ΤΟ ΠΡΟΓΡΑΜΜΑ!
-            print(f"Εσωτερικό σφάλμα στον σταθμό {station}: {e}")
+            print(f"[{station}] ΣΦΑΛΜΑ: {e}")
             driver.save_screenshot(f"screenshots/{today}/CRASH_{station}.png")
             driver.refresh()
-            time.sleep(8)
+            time.sleep(10)
             continue 
 
 finally:
     driver.quit()
-    print("Διαδικασία ολοκληρώθηκε ομαλά.")
+    print("ΤΕΛΟΣ ZERO BASE.")
