@@ -1,7 +1,5 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
 import time
 import os
 from datetime import datetime
@@ -23,14 +21,18 @@ chrome_options.add_argument(f'user-agent={user_agent}')
 driver = webdriver.Chrome(options=chrome_options)
 
 try:
-    print("Εκκίνηση: Ανθρώπινο Χέρι & Δυναμική Σάρωση ΟΛΩΝ των Σταθμών...")
+    print("ΕΚΚΙΝΗΣΗ: Μηχανική Σάρωση Όλων των Σταθμών (Native Mouse)...")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(15)
+    time.sleep(15) # Περιμένουμε να φορτώσει πλήρως ο χάρτης
 
     today = datetime.now().strftime("%Y-%m-%d")
     os.makedirs(f"screenshots/{today}", exist_ok=True)
 
-    # 1. Καθαρισμός ενοχλητικών παραθύρων/cookies
+    # 1. ΦΩΤΟΓΡΑΦΙΑ ΑΣΦΑΛΕΙΑΣ (Για να μην είναι ποτέ άδειος ο φάκελος)
+    driver.save_screenshot(f"screenshots/{today}/00_PROOF_OF_LIFE.png")
+    print("Βγήκε η αρχική φωτογραφία! Ο φάκελος δημιουργήθηκε.")
+
+    # 2. Καθαρισμός Cookies
     driver.execute_script("""
         document.querySelectorAll('*').forEach(el => {
             var s = window.getComputedStyle(el);
@@ -39,136 +41,100 @@ try:
     """)
     time.sleep(2)
 
-    # 2. ΕΞΑΓΩΓΗ ΟΛΩΝ ΤΩΝ ΣΤΑΘΜΩΝ ΑΠΟ ΤΟΝ ΧΑΡΤΗ
-    js_get_all_stations = """
-    var container = document.querySelector('.leaflet-container');
-    if(!container) return [];
-    var map = null;
-    for (var key in container) {
-        if (key.startsWith('__leaflet_')) {
-            map = container[key];
-            if (map._map) map = map._map;
-            break;
-        }
-    }
-    if(!map) return [];
-    
-    var stations = [];
-    map.eachLayer(function(layer) {
-        if(layer._popup && typeof layer._popup._content === 'string') {
-            var tempDiv = document.createElement('div');
-            tempDiv.innerHTML = layer._popup._content;
-            var text = tempDiv.textContent || tempDiv.innerText;
-            var lines = text.split('\\n');
-            for(var i=0; i<lines.length; i++) {
-                if(lines[i].trim().length > 2) {
-                    stations.push(lines[i].trim());
-                    break;
-                }
-            }
-        }
-    });
-    return [...new Set(stations)];
-    """
-    all_stations = driver.execute_script(js_get_all_stations)
-    
-    if not all_stations:
-        print("Προειδοποίηση: Δεν βρέθηκαν σταθμοί δυναμικά. Εκκίνηση μόνο με Ελληνικό.")
-        all_stations = ["ΕΛΛΗΝΙΚΟ"]
-    else:
-        print(f"ΒΡΕΘΗΚΑΝ {len(all_stations)} ΣΤΑΘΜΟΙ! Ξεκινάει η μαζική σάρωση.")
+    # 3. Μετράμε πόσες πινέζες έχει ο χάρτης
+    num_pins = driver.execute_script("return document.querySelectorAll('.leaflet-marker-icon').length;")
+    print(f"ΒΡΕΘΗΚΑΝ ΣΥΝΟΛΙΚΑ {num_pins} ΠΙΝΕΖΕΣ! Ξεκινάω τη σάρωση...")
 
-    # 3. ΣΑΡΩΣΗ ΕΝΑΝ-ΕΝΑΝ
-    for idx, station in enumerate(all_stations):
-        print(f"\n[{idx+1}/{len(all_stations)}] Επεξεργασία: {station}")
+    if num_pins == 0:
+        print("ΠΡΟΕΙΔΟΠΟΙΗΣΗ: Δεν βρέθηκαν πινέζες. Κάτι μπλοκάρει τον χάρτη.")
+
+    # 4. ΣΑΡΩΣΗ ΜΙΑ-ΜΙΑ ΤΙΣ ΠΙΝΕΖΕΣ (Σαν άνθρωπος)
+    for i in range(num_pins):
+        station_name = f"Station_{i}"
         try:
-            # Ανοίγουμε την πινέζα σιωπηλά για να μην έχουμε επικαλύψεις γραφικών
-            js_open_pin = f"""
-            var container = document.querySelector('.leaflet-container');
-            var map = null;
-            for (var key in container) {{
-                if (key.startsWith('__leaflet_')) {{ map = container[key]; if (map._map) map = map._map; break; }}
-            }}
-            var found = false;
-            map.eachLayer(function(layer) {{
-                if(layer._popup && typeof layer._popup._content === 'string') {{
-                    if(layer._popup._content.includes('{station}')) {{
-                        layer.fire('click');
-                        found = true;
-                    }}
-                }}
-            }});
-            return found;
-            """
-            driver.execute_script(js_open_pin)
-            time.sleep(3) # Χρόνος για να κατέβουν τα δεδομένα του σταθμού
-
-            # Σκρολ ακριβώς πάνω στο διάγραμμα
-            try:
-                chart_container = driver.find_element(By.CSS_SELECTOR, ".highcharts-container")
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", chart_container)
-                time.sleep(4)
-            except:
-                print(f"[{station}] Δεν βρέθηκε διάγραμμα.")
-                continue
-
-            # Υπολογισμός των ακριβών pixels (X, Y) του Max και Min
-            js_get_pixels = """
-            var chart = Highcharts.charts.find(c => c && c.series && c.series[0].points);
-            if (!chart) return null;
-            var points = chart.series[0].points;
-            var maxPt = null, minPt = null;
+            # Επιστροφή στην κορυφή για να πατήσουμε την πινέζα
+            driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(1)
             
-            for(var i=0; i<points.length; i++) {
-                if(points[i].y !== null) {
-                    if(maxPt === null || points[i].y > maxPt.y) maxPt = points[i];
-                    if(minPt === null || points[i].y < minPt.y) minPt = points[i];
+            # Κλικ στην πινέζα
+            driver.execute_script(f"document.querySelectorAll('.leaflet-marker-icon')[{i}].click();")
+            time.sleep(2.5) # Αναμονή να ανοίξει το popup και να φορτώσουν τα δεδομένα
+
+            # Ανάγνωση του ονόματος του σταθμού
+            js_name = "var p = document.querySelector('.leaflet-popup-content, .card'); return p ? p.innerText.split('\\n')[0].trim() : 'Unknown';"
+            station_name = driver.execute_script(js_name).replace('/', '_').replace(' ', '_')
+            print(f"\n[{i+1}/{num_pins}] Επεξεργασία: {station_name}")
+
+            # Σκρολ κάτω στο Διάγραμμα
+            driver.execute_script("window.scrollBy(0, 850);")
+            time.sleep(4) # Αναμονή να σχεδιαστεί η καμπύλη
+
+            # 5. ΤΟ ΑΝΘΡΩΠΙΝΟ ΧΕΡΙ (Native JS Mouse Event)
+            js_hover = """
+            var isMax = arguments[0];
+            var chart = Highcharts.charts.find(c => c && c.series && c.series[0].points);
+            if (!chart) return false;
+            
+            var points = chart.series[0].points;
+            var target = null;
+            for(var j=0; j<points.length; j++) {
+                if(points[j].y !== null) {
+                    if(target === null) target = points[j];
+                    else if(isMax && points[j].y > target.y) target = points[j];
+                    else if(!isMax && points[j].y < target.y) target = points[j];
                 }
             }
-            if (!maxPt || !minPt) return null;
+            if(!target) return false;
+
+            // Δημιουργούμε ένα ΑΛΗΘΙΝΟ ψηφιακό κλικ/κίνηση ποντικιού
+            var rect = chart.container.getBoundingClientRect();
+            var clientX = rect.left + chart.plotLeft + target.plotX;
+            var clientY = rect.top + chart.plotTop + target.plotY;
+            var evt = new MouseEvent('mousemove', {
+                clientX: clientX, clientY: clientY, bubbles: true, cancelable: true, view: window
+            });
+            chart.container.dispatchEvent(evt);
             
-            return {
-                maxX: Math.round(maxPt.plotX + chart.plotLeft),
-                maxY: Math.round(maxPt.plotY + chart.plotTop),
-                minX: Math.round(minPt.plotX + chart.plotLeft),
-                minY: Math.round(minPt.plotY + chart.plotTop)
-            };
+            // Back-up εντολή API για σιγουριά
+            try {
+                chart.tooltip.refresh(target);
+                target.setState('hover');
+                chart.xAxis[0].drawCrosshair(null, target);
+            } catch(e) {}
+            
+            return true;
             """
-            coords = driver.execute_script(js_get_pixels)
 
-            if coords:
-                action = ActionChains(driver)
-                safe_name = station.replace(' ', '_').replace('/', '_')
-
-                # ΤΟ ΑΝΘΡΩΠΙΝΟ ΧΕΡΙ: Πάει φυσικά το ποντίκι στο MAX
-                action.move_to_element_with_offset(chart_container, coords['maxX'], coords['maxY']).perform()
-                time.sleep(1.5) # Αναμονή να εμφανιστεί το συννεφάκι
-                driver.save_screenshot(f"screenshots/{today}/{safe_name}_MAX.png")
-
-                # ΤΟ ΑΝΘΡΩΠΙΝΟ ΧΕΡΙ: Πάει φυσικά το ποντίκι στο MIN
-                action.move_to_element_with_offset(chart_container, coords['minX'], coords['minY']).perform()
-                time.sleep(1.5)
-                driver.save_screenshot(f"screenshots/{today}/{safe_name}_MIN.png")
-                
-                print(f"[{station}] Επιτυχία! Το ποντίκι βρήκε τα σημεία.")
+            # Φωτογραφία MAX
+            success_max = driver.execute_script(js_hover, True)
+            time.sleep(1.5)
+            if success_max:
+                driver.save_screenshot(f"screenshots/{today}/{station_name}_MAX.png")
             else:
-                print(f"[{station}] Σφάλμα: Η καμπύλη δεν έχει δεδομένα.")
+                driver.save_screenshot(f"screenshots/{today}/ERROR_{station_name}_MAX.png")
+
+            # Φωτογραφία MIN
+            success_min = driver.execute_script(js_hover, False)
+            time.sleep(1.5)
+            if success_min:
+                driver.save_screenshot(f"screenshots/{today}/{station_name}_MIN.png")
+            else:
+                driver.save_screenshot(f"screenshots/{today}/ERROR_{station_name}_MIN.png")
+
+            print(f"[{station_name}] Επιτυχία!")
 
         except Exception as e:
-            print(f"[{station}] Αποτυχία στο hover: {e}")
-        
-        # Ανανέωση σελίδας για να έχουμε καθαρή μνήμη για τον επόμενο σταθμό
-        driver.refresh()
-        time.sleep(8)
-        driver.execute_script("""
-            document.querySelectorAll('*').forEach(el => {
-                var s = window.getComputedStyle(el);
-                if(s.position === 'fixed' || s.position === 'sticky' || el.id.includes('cookie')) el.remove();
-            });
-        """)
+            print(f"[{station_name}] Σφάλμα: {e}")
+            driver.save_screenshot(f"screenshots/{today}/CRASH_{station_name}.png")
+
+        finally:
+            # Επιστροφή πάνω και κλείσιμο του popup για να καθαρίσει ο χάρτης
+            driver.execute_script("window.scrollTo(0, 0);")
+            driver.execute_script("var closeBtn = document.querySelector('.leaflet-popup-close-button'); if(closeBtn) closeBtn.click();")
+            time.sleep(1)
 
 except Exception as general_e:
-    print(f"Γενικό Σφάλμα: {general_e}")
+    print(f"Γενικό Σφάλμα Συστήματος: {general_e}")
 finally:
     driver.quit()
-    print("Η σάρωση ολοκληρώθηκε.")
+    print("Η διαδικασία ολοκληρώθηκε.")
