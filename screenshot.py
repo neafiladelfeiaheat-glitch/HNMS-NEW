@@ -1,6 +1,5 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 import time
 import os
 from datetime import datetime
@@ -9,76 +8,79 @@ chrome_options = Options()
 chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
-# Οθόνη "γίγαντας" (3000 pixels ύψος) για να χωράει ο χάρτης και το γράφημα από κάτω
+# Φτιάχνουμε την οθόνη "γίγαντα" (3000px ύψος) για να βλέπει και τον χάρτη πάνω και το γράφημα κάτω με τη μία!
 chrome_options.add_argument('--window-size=1920,3000') 
 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 chrome_options.add_argument(f'user-agent={user_agent}')
 
 driver = webdriver.Chrome(options=chrome_options)
-
-# Δοκιμή με Κάσο και Σπάρτη
 target_stations = ["ΚΑΣΟΣ", "ΣΠΑΡΤΗ"]
 
 try:
-    print("Επαναπροσδιορισμός: Λειτουργία 'ΠΙΝΕΖΕΣ'")
+    print("Εκκίνηση Λειτουργίας 'ΠΙΝΕΖΕΣ'...")
     driver.get("https://www.emy.gr/hnms-stations")
-    time.sleep(15) # Περιμένουμε να φορτώσει ο χάρτης και οι πινέζες
+    time.sleep(12) 
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    os.makedirs(f"screenshots/{today}", exist_ok=True)
+
+    # 1. Η ΔΙΚΛΕΙΔΑ ΑΣΦΑΛΕΙΑΣ: Βγάζουμε ΠΑΝΤΑ την αρχική φωτογραφία του χάρτη!
+    driver.save_screenshot(f"screenshots/{today}/0_MAP_START.png")
+    print("Η αρχική φωτογραφία του χάρτη αποθηκεύτηκε. Ο φάκελος δεν θα είναι άδειος.")
 
     # Σκοτώνουμε τα cookies
     driver.execute_script("document.querySelectorAll('button').forEach(b => { if(b.textContent.includes('Αποδοχή')) b.click(); });")
     time.sleep(2)
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    os.makedirs(f"screenshots/{today}", exist_ok=True)
-
     for station in target_stations:
-        print(f"--- Ψάχνω την πινέζα για: {station} ---")
+        print(f"--- Ξεκινάω να πατάω πινέζες για: {station} ---")
         
-        # Βρίσκουμε όλες τις πινέζες (τα εικονίδια) πάνω στον χάρτη
-        pins = driver.find_elements(By.CSS_SELECTOR, 'img[src*="marker"], img[src*="pin"], .leaflet-marker-icon, [class*="marker"]')
-        print(f"Βρέθηκαν συνολικά {len(pins)} πινέζες. Ξεκινάω να πατάω...")
+        # 2. Το ρομπότ πατάει τις πινέζες ΜΙΑ-ΜΙΑ μέχρι να δει το όνομα που ψάχνουμε
+        js_find_pin = f"""
+        var cb = arguments[arguments.length - 1]; 
+        (async function() {{
+            var pins = document.querySelectorAll('.leaflet-marker-icon, img[src*="marker"], [class*="marker"]');
+            if (pins.length === 0) {{ cb("NO_PINS"); return; }}
+            
+            for(var i=0; i<pins.length; i++) {{
+                try {{ pins[i].click(); }} catch(e) {{}}
+                await new Promise(r => setTimeout(r, 1000)); // Περιμένουμε 1 δευτερόλεπτο να ανοίξει το παραθυράκι
+                
+                // Ελέγχουμε αν το όνομα (π.χ. ΚΑΣΟΣ) εμφανίστηκε στο popup
+                var popups = document.querySelectorAll('.leaflet-popup-content, [class*="popup"], .card, .info');
+                for(var j=0; j<popups.length; j++) {{
+                    if(popups[j].textContent.toUpperCase().includes('{station}')) {{
+                        cb("FOUND");
+                        return;
+                    }}
+                }}
+            }}
+            cb("NOT_FOUND");
+        }})();
+        """
         
-        found = False
-        for pin in pins:
-            try:
-                # 1. Πατάμε την πινέζα όπως ακριβώς κάνεις εσύ
-                driver.execute_script("arguments[0].click();", pin)
-                time.sleep(0.5) # Μικρή παύση να ανοίξει το παραθυράκι του σταθμού
-                
-                # 2. Διαβάζουμε αν το όνομα του σταθμού (π.χ. ΣΠΑΡΤΗ) εμφανίστηκε
-                popups = driver.find_elements(By.CSS_SELECTOR, '[class*="popup"], [class*="info"], .card, .panel, .leaflet-popup-content')
-                for p in popups:
-                    if station in p.text.upper():
-                        found = True
-                        break
-                        
-                if found:
-                    break
-            except:
-                continue
-                
-        if not found:
-            print(f"Αποτυχία: Δεν βρέθηκε η πινέζα για {station}.")
+        # Δίνουμε 2 λεπτά χρόνο στο ρομπότ να ψάξει όλες τις πινέζες
+        driver.set_script_timeout(120) 
+        result = driver.execute_async_script(js_find_pin)
+        
+        if result != "FOUND":
+            print(f"Αποτυχία: Πάτησα όλες τις πινέζες αλλά δεν βρήκα το '{station}'.")
+            driver.save_screenshot(f"screenshots/{today}/ERROR_{station}_NOT_FOUND.png")
             continue
             
-        print(f"Βρέθηκε η πινέζα για {station}! Σκρολάρω προς τα κάτω για το διάγραμμα...")
+        print(f"ΒΡΗΚΑ ΤΗΝ ΠΙΝΕΖΑ ΓΙΑ {station}! Σκρολάρω προς τα κάτω για το γράφημα...")
         
-        # 3. Σκρολάρουμε προς τα κάτω στοχευμένα στο γράφημα Highcharts
-        driver.execute_script("""
-            var chartDiv = document.querySelector('.highcharts-container, [id*="highcharts"]');
-            if (chartDiv) {
-                chartDiv.scrollIntoView({block: 'center', behavior: 'smooth'});
-            } else {
-                window.scrollTo(0, 1500); // Αν δεν το βρει, πάει απλά κάτω
-            }
-        """)
-        time.sleep(8) # Αναμονή για να σχεδιαστεί η καμπύλη
+        # 3. Σκρολάρουμε προς τα κάτω για το διάγραμμα
+        driver.execute_script("window.scrollBy(0, 1000);")
+        time.sleep(6) # Περιμένουμε να σχεδιαστεί η καμπύλη Highcharts
         
-        # 4. Βρίσκουμε Max/Min και κάνουμε Hover
+        # Φωτογραφία ελέγχου ότι κατέβηκε σωστά
+        driver.save_screenshot(f"screenshots/{today}/1_SCROLLED_{station}.png")
+        
+        # 4. Βρίσκουμε το Max/Min και κάνουμε Hover
         js_indices = """
         if(typeof Highcharts === 'undefined' || !Highcharts.charts[0]) return null;
-        var chart = Highcharts.charts[0];
-        var data = chart.series[0].data;
+        var data = Highcharts.charts[0].series[0].data;
         if(!data || data.length === 0) return null;
         var maxP = data.reduce((max, p) => p.y > max.y ? p : max, data[0]);
         var minP = data.reduce((min, p) => p.y < min.y ? p : min, data[0]);
@@ -96,11 +98,12 @@ try:
             driver.save_screenshot(f"screenshots/{today}/{station}_MIN.png")
             print(f"ΕΠΙΤΥΧΙΑ: Αποθηκεύτηκαν τα διαγράμματα για {station}")
         else:
-            print(f"Το διάγραμμα δεν φορτώθηκε κάτω για τον σταθμό {station}.")
+            print(f"Το διάγραμμα δεν φορτώθηκε για {station}.")
+            driver.save_screenshot(f"screenshots/{today}/ERROR_{station}_NO_CHART.png")
             
-        # 5. Ανανέωση σελίδας για να κλείσει η πινέζα και να πάμε στον επόμενο
+        # 5. Ανανέωση σελίδας για να κλείσει η πινέζα και να πάμε στον επόμενο σταθμό
         driver.refresh()
-        time.sleep(10)
+        time.sleep(8)
         try: driver.execute_script("document.querySelectorAll('button').forEach(b => { if(b.textContent.includes('Αποδοχή')) b.click(); });")
         except: pass
 
